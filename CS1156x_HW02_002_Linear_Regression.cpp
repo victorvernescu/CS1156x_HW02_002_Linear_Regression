@@ -1,6 +1,201 @@
+#include <vector>
+#include <functional>
+#include <random>
+#include <chrono>
+
+#include "armadillo"
+
+using namespace std;
+using namespace arma;
+
+struct point
+{
+	double x, y;
+	char cat;
+};
+
+struct func
+{
+	double c[3];
+};
+
+template<class Func>
+point generatePoint(Func randomCoord)
+{
+	point p;
+
+	p.x = randomCoord();
+	p.y = randomCoord();
+
+	return p;
+}
+
+template<class Func>
+func generateHypo(Func randomCoord)
+{
+	func res;
+	point p1, p2;
+
+	p1 = generatePoint(randomCoord);
+	p2 = generatePoint(randomCoord);
+
+	res.c[0] = p2.y - p1.y;
+	res.c[1] = p1.x - p2.x;
+	res.c[2] = p1.x * (p1.y - p2.y) + p1.y * (p2.x - p1.x);
+
+	return res;
+}
+
+char applyFunction(const point& o, func f)
+{
+	double det = f.c[0] * o.x + f.c[1] * o.y + f.c[2];
+
+	return (det < 0) ? -1 : 1;
+}
+
+template<class Func>
+void generateData(const int& D, const func& f, vector<point> &data, Func randomCoord)
+{
+	data.clear();
+	point p;
+
+	for (int i = 0; i < D; i++)
+	{
+		p = generatePoint(randomCoord);
+		p.cat = applyFunction(p, f);
+		data.push_back(p);
+	}
+}
+
+vector<point> getMismatch(int N, const vector<point>& data, const func& f)
+{
+	vector<point> res;
+	int i = 0;
+
+	for (vector<point>::const_iterator it = data.begin(); it != data.end() && i < N; it++, i++)
+	{
+		float cat = applyFunction(*it, f);
+
+		if (cat != (*it).cat)
+		{
+			res.push_back(*it);
+		}
+	}
+
+	return res;
+}
+
+long runPLA(const int& N, const vector<point>& data, func& g)
+{
+	long it = 0;
+	vector<point> mismatch;
+
+	for (mismatch = getMismatch(N, data, g); mismatch.size() > 0; mismatch = getMismatch(N, data, g))
+	{
+		it++;
+
+		point p = mismatch[rand() % mismatch.size()];
+
+		g.c[0] += p.cat * p.x;
+		g.c[1] += p.cat * p.y;
+		g.c[2] += p.cat * 1;
+	}
+
+	return it;
+}
+
+void runLinearRegression(const int& N, const int& d, const vector<point>& data, func& g)
+{
+	mat x(N,d + 1), xTrans, xDagger;
+	mat y(N, 1);
+
+	for (int i = 0; i < N; i++)
+	{
+		x(i, 0) = 1.0;
+		x(i, 1) = data[i].x;
+		x(i, 2) = data[i].y;
+		y(i, 0) = data[i].cat;
+	}
+
+	xTrans = trans(x);
+	xDagger = inv(xTrans * x) * xTrans;
+
+	mat w(1, d + 1);
+
+	w = xDagger * y;
+
+	g.c[0] = w(1, 0);
+	g.c[1] = w(2, 0);
+	g.c[2] = w(0, 0);
+}
 
 int main(int argc, char* argv[])
 {
+	const int N = 10;
+	const int D = 1100;
+	const int d = 2;
+	const int runs = 10000;
+	long long sumPLA = 0;
+	long long eIn = 0; 
+	long long eOut = 0;
+	double p = 0;
+
+	func f, g;
+	vector<point> data;
+	default_random_engine generator;
+	generator.seed((unsigned long)chrono::system_clock::now().time_since_epoch().count());
+
+	uniform_real_distribution<double> faceDistribution(-1.0, 1.0);
+	auto randomCoord = bind(faceDistribution, ref(generator));
+
+	for (int i = 0; i < runs; i++)
+	{
+		f = generateHypo(randomCoord);
+		generateData(D, f, data, randomCoord);
+
+		runLinearRegression(N, d, data, g);
+
+		for (vector<point>::const_iterator it = data.cbegin(); it != data.cbegin() + N; it++)
+		{
+			char cat = applyFunction(*it, g);
+			if (cat != (*it).cat)
+			{
+				eIn++;
+			}
+		}
+
+		for (vector<point>::const_iterator it = data.cbegin() + N; it != data.cend(); it++)
+		{
+			char cat = applyFunction(*it, g);
+			if (cat != (*it).cat)
+			{
+				eOut++;
+			}
+		}
+		
+		sumPLA += runPLA(N, data, g);
+
+		//long miss = 0;
+		//for (vector<point>::const_iterator it = data.cbegin() + N; it != data.cend(); it++)
+		//{
+		//	char cat = applyFunction(*it, g);
+		//	if (cat != (*it).cat)
+		//	{
+		//		miss++;
+		//	}
+		//}
+
+		//p += (float)miss / data.size();
+
+		if (i % 100 == 0)
+		{
+			printf("Run %d completed!\n", i);
+		}
+	}
+
+	printf("For %d runs on N = %d we have %.3f iterations\n", runs, N, (float)sumPLA / runs);
+	printf("For %d runs on N = %d we have E_in = %.4f and E_out = %.4f\n", runs, N, (float)eIn / runs / N, (float)eOut / runs / (D - N));
+
 	return 0;
 }
 
